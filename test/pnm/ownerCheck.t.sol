@@ -20,7 +20,7 @@ import {PTest} from "lib/narya-contracts/PTest.sol";
 import {VmSafe} from "lib/narya-contracts/lib/forge-std/src/Vm.sol";
 import {console} from "lib/narya-contracts/lib/forge-std/src/console.sol";
 
-contract wrongEmittedEvent is PTest {
+contract ownerCheck is PTest {
     NameWrapper public wrapper;
     ENSRegistry public registry;
     StaticMetadataService public metadata;
