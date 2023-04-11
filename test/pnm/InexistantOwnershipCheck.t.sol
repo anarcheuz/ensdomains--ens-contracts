@@ -69,10 +69,7 @@ contract InexistantOwnershipCheck is PTest {
         registry = new ENSRegistry();
 
         // base registrar
-        baseRegistrar = new MaliciousRegistrar(
-            registry,
-            namehash("eth")
-        );
+        baseRegistrar = new MaliciousRegistrar(registry, namehash("eth"));
 
         baseRegistrar.addController(owner);
 
@@ -121,13 +118,7 @@ contract InexistantOwnershipCheck is PTest {
     function actionRegisterAndWrap(string memory label) public {
         vm.startPrank(agent);
 
-        wrapper.registerAndWrapETH2LD(
-            label,
-            bob,
-            10 days,
-            EMPTY_ADDRESS,
-            0
-        );
+        wrapper.registerAndWrapETH2LD(label, bob, 10 days, EMPTY_ADDRESS, 0);
 
         string memory fullname = string.concat(label, ".eth");
         bytes32 node = namehash(fullname);
@@ -140,20 +131,17 @@ contract InexistantOwnershipCheck is PTest {
 
         address ensOwner = registry.owner(node);
 
-        pnmLogs.push(LogInfo(
-            label,
-            isWrapped,
-            ensOwner
-        ));
+        pnmLogs.push(LogInfo(label, isWrapped, ensOwner));
 
         vm.stopPrank();
     }
-    
+
     function invariantIsOwnerOfWrappedName() public {
         for (uint i = 0; i < pnmLogs.length; ++i) {
             LogInfo memory log = pnmLogs[i];
             if (log.isWrapped) {
-                require(log.ensOwner == address(wrapper),
+                require(
+                    log.ensOwner == address(wrapper),
                     "user owns the wrapped name but wrapper doesn't own the ENS record"
                 );
             }
@@ -165,19 +153,15 @@ contract InexistantOwnershipCheck is PTest {
     function testOwnershipERC1155() public {
         vm.startPrank(agent);
 
-        wrapper.registerAndWrapETH2LD(
-            "sub1",
-            bob,
-            10 days,
-            EMPTY_ADDRESS,
-            0
-        );
+        wrapper.registerAndWrapETH2LD("sub1", bob, 10 days, EMPTY_ADDRESS, 0);
 
         // 1. The ERC1155 is owned by bob
-        // 2. Then, the registry must show that the record is owned by the wrapper 
-        require(wrapper.ownerOf(uint256(namehash("sub1.eth"))) == bob 
-            && registry.owner(namehash("sub1.eth")) == address(wrapper),
-            "user owns the wrapped name but wrapper doesn't own the ENS record");
+        // 2. Then, the registry must show that the record is owned by the wrapper
+        require(
+            wrapper.ownerOf(uint256(namehash("sub1.eth"))) == bob &&
+                registry.owner(namehash("sub1.eth")) == address(wrapper),
+            "user owns the wrapped name but wrapper doesn't own the ENS record"
+        );
 
         vm.stopPrank();
     }

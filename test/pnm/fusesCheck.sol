@@ -221,7 +221,7 @@ contract fusesCheck is PTest {
         wrapper.registerAndWrapETH2LD(label, addr, expiry, addr2, fuses);
         vm.stopPrank();
     }
-    
+
     function invariantCannotUnwrap() public {
         vm.startPrank(agent);
 
