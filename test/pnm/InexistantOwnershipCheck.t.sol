@@ -162,7 +162,7 @@ contract InexistantOwnershipCheck is PTest {
         delete pnmLogs;
     }
 
-    function testme() public {
+    function testOwnershipERC1155() public {
         vm.startPrank(agent);
 
         wrapper.registerAndWrapETH2LD(
