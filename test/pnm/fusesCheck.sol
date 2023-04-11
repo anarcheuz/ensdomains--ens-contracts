@@ -20,7 +20,7 @@ import {PTest} from "lib/narya-contracts/PTest.sol";
 import {VmSafe} from "lib/narya-contracts/lib/forge-std/src/Vm.sol";
 import {console} from "lib/narya-contracts/lib/forge-std/src/console.sol";
 
-contract ownerCheck is PTest {
+contract fusesCheck is PTest {
     NameWrapper public wrapper;
     ENSRegistry public registry;
     StaticMetadataService public metadata;
@@ -30,7 +30,7 @@ contract ownerCheck is PTest {
     PublicResolver public publicResolver;
 
     address owner;
-    address user;
+    address bob;
     address agent;
 
     address MOCK_RESOLVER = 0x4976fb03C32e5B8cfe2b6cCB31c09Ba78EBaBa41;
@@ -42,9 +42,12 @@ contract ownerCheck is PTest {
     bytes32 node1;
     bytes32 node2;
 
+    address savedResolver;
+    uint64 savedTTL;
+
     function setUp() public {
         owner = makeAddr("OWNER");
-        user = makeAddr("USER");
+        bob = makeAddr("BOB");
         agent = getAgent();
 
         vm.deal(owner, 1 ether);
@@ -96,7 +99,7 @@ contract ownerCheck is PTest {
             labelhash("eth"),
             address(baseRegistrar)
         );
-        node2 = registry.setSubnodeOwner(ROOT_NODE, labelhash("xyz"), user);
+        node2 = registry.setSubnodeOwner(ROOT_NODE, labelhash("xyz"), agent);
 
         baseRegistrar.addController(address(wrapper));
         baseRegistrar.addController(owner);
@@ -136,48 +139,182 @@ contract ownerCheck is PTest {
 
         wrapper.setController(address(controller), true);
 
-        string memory name = "abc";
+        wrapper.registerAndWrapETH2LD(
+            "sub1",
+            agent,
+            10 days,
+            EMPTY_ADDRESS,
+            uint16(CANNOT_UNWRAP)
+        );
 
-        IPriceOracle.Price memory price = controller.rentPrice(name, 28 days);
-        // console.log("price base", price.base);
-        // console.log("premium", price.premium);
-
-        bytes[] memory data;
-        bytes32 secret = bytes32("012345678901234567890123456789ab");
-
-        controller.commit(
-            controller.makeCommitment(
-                name,
-                owner,
-                28 days,
-                secret,
-                address(0),
-                data,
-                false,
-                0
+        wrapper.registerAndWrapETH2LD(
+            "sub2",
+            agent,
+            10 days,
+            EMPTY_ADDRESS,
+            uint16(
+                PARENT_CANNOT_CONTROL | CANNOT_UNWRAP | CANNOT_CREATE_SUBDOMAIN
             )
         );
 
-        controller.register{value: price.base + price.premium}(
-            name,
-            owner,
-            28 days,
-            secret,
-            address(0),
-            data,
-            false,
-            0
+        wrapper.registerAndWrapETH2LD(
+            "sub3",
+            agent,
+            10 days,
+            EMPTY_ADDRESS,
+            uint16(PARENT_CANNOT_CONTROL | CANNOT_UNWRAP | CANNOT_BURN_FUSES)
+        );
+
+        wrapper.registerAndWrapETH2LD(
+            "sub4",
+            agent,
+            10 days,
+            EMPTY_ADDRESS,
+            uint16(CANNOT_UNWRAP | CANNOT_SET_RESOLVER)
+        );
+
+        savedResolver = registry.resolver(namehash("sub4.eth"));
+
+        wrapper.registerAndWrapETH2LD(
+            "sub5",
+            agent,
+            10 days,
+            EMPTY_ADDRESS,
+            uint16(CANNOT_UNWRAP | CANNOT_SET_TTL)
+        );
+
+        savedTTL = registry.ttl(namehash("sub5.eth"));
+
+        wrapper.registerAndWrapETH2LD(
+            "sub6",
+            agent,
+            10 days,
+            EMPTY_ADDRESS,
+            uint16(CANNOT_UNWRAP | CANNOT_TRANSFER)
+        );
+
+        wrapper.registerAndWrapETH2LD(
+            "sub7",
+            agent,
+            10 days,
+            EMPTY_ADDRESS,
+            uint16(CANNOT_UNWRAP | CANNOT_APPROVE)
         );
 
         vm.stopPrank();
     }
 
-    function invariantOwnerCheck() public {
+    function actionSetSubnodeOwner(string memory label, address addr) public {
+        vm.startPrank(owner);
+        registry.setSubnodeOwner(ROOT_NODE, labelhash(label), addr);
+        vm.stopPrank();
+    }
+
+    function actionWrapEth(
+        string memory label,
+        address addr,
+        uint256 expiry,
+        address addr2,
+        uint16 fuses
+    ) public {
+        vm.startPrank(owner);
+        wrapper.registerAndWrapETH2LD(label, addr, expiry, addr2, fuses);
+        vm.stopPrank();
+    }
+    
+    function invariantCannotUnwrap() public {
+        vm.startPrank(agent);
+
+        vm.expectRevert();
+        wrapper.unwrapETH2LD(labelhash("sub1"), agent, agent);
+
+        vm.stopPrank();
+    }
+
+    function invariantCannotAddSubDomains() public {
+        vm.startPrank(agent);
+
+        vm.expectRevert();
+        wrapper.setSubnodeOwner(namehash("sub2.eth"), "sub22", agent, 0, 0);
+
+        vm.stopPrank();
+    }
+
+    function invariantCannotSetFuses() public {
+        vm.startPrank(agent);
+
+        (, uint32 fuses, ) = wrapper.getData(uint256(namehash("sub3.eth")));
+        // console.log(fuses);
         require(
-            registry.owner(node1) == address(baseRegistrar),
-            "node1 owner changed"
+            fuses ==
+                (PARENT_CANNOT_CONTROL |
+                    CANNOT_UNWRAP |
+                    CANNOT_BURN_FUSES |
+                    IS_DOT_ETH)
         );
-        require(registry.owner(node2) == user, "node2 owner changed");
+
+        vm.stopPrank();
+    }
+
+    function invariantCannotSetResolver() public {
+        vm.startPrank(agent);
+
+        require(savedResolver == registry.resolver(namehash("sub4.eth")));
+
+        vm.expectRevert();
+        wrapper.setResolver(namehash("sub4.eth"), address(41414141));
+
+        vm.expectRevert();
+        wrapper.setRecord(namehash("sub4.eth"), address(42), address(43), 44);
+
+        vm.stopPrank();
+    }
+
+    function invariantCannotSetTTL() public {
+        vm.startPrank(agent);
+
+        require(savedTTL == registry.ttl(namehash("sub5.eth")));
+
+        vm.expectRevert();
+        wrapper.setTTL(namehash("sub5.eth"), 0x41414141);
+
+        vm.expectRevert();
+        wrapper.setRecord(namehash("sub5.eth"), address(42), address(43), 44);
+
+        vm.stopPrank();
+    }
+
+    function invariantCannotTransfer() public {
+        vm.startPrank(agent);
+
+        // check that it wasnt transferred
+        require(wrapper.ownerOf(uint256(namehash("sub6.eth"))) == agent);
+
+        // check we cannot transfer it
+        vm.expectRevert();
+        wrapper.setRecord(namehash("sub6.eth"), address(42), address(43), 44);
+
+        bytes memory data;
+
+        vm.expectRevert();
+        wrapper.safeTransferFrom(
+            agent,
+            bob,
+            uint256(namehash("sub6.eth")),
+            1,
+            data
+        );
+
+        vm.stopPrank();
+    }
+
+    function invariantCannotApprove() public {
+        vm.startPrank(agent);
+
+        vm.expectRevert();
+        wrapper.approve(bob, uint256(namehash("sub7.eth")));
+
+        vm.stopPrank();
     }
 
     // utility methods

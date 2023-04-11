@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import "../../contracts/registry/ENSRegistry.sol";
-import "../../contracts/ethregistrar/BaseRegistrarImplementation.sol";
+import {MaliciousRegistrar} from "./MaliciousRegistrar.sol";
 import "../../contracts/ethregistrar/DummyOracle.sol";
 import "../../contracts/wrapper/StaticMetadataService.sol";
 import "../../contracts/wrapper/IMetadataService.sol";
@@ -20,17 +20,17 @@ import {PTest} from "lib/narya-contracts/PTest.sol";
 import {VmSafe} from "lib/narya-contracts/lib/forge-std/src/Vm.sol";
 import {console} from "lib/narya-contracts/lib/forge-std/src/console.sol";
 
-contract ownerCheck is PTest {
+contract InexistantOwnershipCheck is PTest {
     NameWrapper public wrapper;
     ENSRegistry public registry;
     StaticMetadataService public metadata;
     IETHRegistrarController public controller;
-    BaseRegistrarImplementation public baseRegistrar;
+    MaliciousRegistrar public baseRegistrar;
     ReverseRegistrar public reverseRegistrar;
     PublicResolver public publicResolver;
 
     address owner;
-    address user;
+    address bob;
     address agent;
 
     address MOCK_RESOLVER = 0x4976fb03C32e5B8cfe2b6cCB31c09Ba78EBaBa41;
@@ -42,9 +42,20 @@ contract ownerCheck is PTest {
     bytes32 node1;
     bytes32 node2;
 
+    address savedResolver;
+    uint64 savedTTL;
+
+    struct LogInfo {
+        string label;
+        bool isWrapped;
+        address ensOwner;
+    }
+
+    LogInfo[] pnmLogs;
+
     function setUp() public {
         owner = makeAddr("OWNER");
-        user = makeAddr("USER");
+        bob = makeAddr("BOB");
         agent = getAgent();
 
         vm.deal(owner, 1 ether);
@@ -58,7 +69,7 @@ contract ownerCheck is PTest {
         registry = new ENSRegistry();
 
         // base registrar
-        baseRegistrar = new BaseRegistrarImplementation(
+        baseRegistrar = new MaliciousRegistrar(
             registry,
             namehash("eth")
         );
@@ -96,88 +107,79 @@ contract ownerCheck is PTest {
             labelhash("eth"),
             address(baseRegistrar)
         );
-        node2 = registry.setSubnodeOwner(ROOT_NODE, labelhash("xyz"), user);
+        node2 = registry.setSubnodeOwner(ROOT_NODE, labelhash("xyz"), agent);
 
         baseRegistrar.addController(address(wrapper));
         baseRegistrar.addController(owner);
-        wrapper.setController(owner, true);
-        // wrapper.setController(agent, true);
+        wrapper.setController(agent, true);
 
         baseRegistrar.setApprovalForAll(address(wrapper), true);
-
-        // setup oracles
-        DummyOracle dummyOracle = new DummyOracle(100000000);
-        AggregatorInterface aggregator = AggregatorInterface(
-            address(dummyOracle)
-        );
-
-        uint256[] memory rentPrices = new uint256[](5);
-        uint8[5] memory _prices = [0, 0, 4, 2, 1];
-        for (uint256 i = 0; i < _prices.length; i++) {
-            rentPrices[i] = _prices[i];
-        }
-
-        StablePriceOracle priceOracle = new StablePriceOracle(
-            aggregator,
-            rentPrices
-        );
-
-        ETHRegistrarController ensReg = new ETHRegistrarController(
-            baseRegistrar,
-            priceOracle,
-            0, // min commitment age
-            86400, // max commitment age
-            reverseRegistrar,
-            wrapper,
-            registry
-        );
-
-        controller = IETHRegistrarController(ensReg);
-
-        wrapper.setController(address(controller), true);
-
-        string memory name = "abc";
-
-        IPriceOracle.Price memory price = controller.rentPrice(name, 28 days);
-        // console.log("price base", price.base);
-        // console.log("premium", price.premium);
-
-        bytes[] memory data;
-        bytes32 secret = bytes32("012345678901234567890123456789ab");
-
-        controller.commit(
-            controller.makeCommitment(
-                name,
-                owner,
-                28 days,
-                secret,
-                address(0),
-                data,
-                false,
-                0
-            )
-        );
-
-        controller.register{value: price.base + price.premium}(
-            name,
-            owner,
-            28 days,
-            secret,
-            address(0),
-            data,
-            false,
-            0
-        );
 
         vm.stopPrank();
     }
 
-    function invariantOwnerCheck() public {
-        require(
-            registry.owner(node1) == address(baseRegistrar),
-            "node1 owner changed"
+    function actionRegisterAndWrap(string memory label) public {
+        vm.startPrank(agent);
+
+        wrapper.registerAndWrapETH2LD(
+            label,
+            bob,
+            10 days,
+            EMPTY_ADDRESS,
+            0
         );
-        require(registry.owner(node2) == user, "node2 owner changed");
+
+        string memory fullname = string.concat(label, ".eth");
+        bytes32 node = namehash(fullname);
+        uint256 nodeid = uint256(node);
+
+        bool isWrapped = false;
+        if (wrapper.ownerOf(nodeid) == bob) {
+            isWrapped = true;
+        }
+
+        address ensOwner = registry.owner(node);
+
+        pnmLogs.push(LogInfo(
+            label,
+            isWrapped,
+            ensOwner
+        ));
+
+        vm.stopPrank();
+    }
+    
+    function invariantIsOwnerOfWrappedName() public {
+        for (uint i = 0; i < pnmLogs.length; ++i) {
+            LogInfo memory log = pnmLogs[i];
+            if (log.isWrapped) {
+                require(log.ensOwner == address(wrapper),
+                    "user owns the wrapped name but wrapper doesn't own the ENS record"
+                );
+            }
+        }
+
+        delete pnmLogs;
+    }
+
+    function testme() public {
+        vm.startPrank(agent);
+
+        wrapper.registerAndWrapETH2LD(
+            "sub1",
+            bob,
+            10 days,
+            EMPTY_ADDRESS,
+            0
+        );
+
+        // 1. The ERC1155 is owned by bob
+        // 2. Then, the registry must show that the record is owned by the wrapper 
+        require(wrapper.ownerOf(uint256(namehash("sub1.eth"))) == bob 
+            && registry.owner(namehash("sub1.eth")) == address(wrapper),
+            "user owns the wrapped name but wrapper doesn't own the ENS record");
+
+        vm.stopPrank();
     }
 
     // utility methods
