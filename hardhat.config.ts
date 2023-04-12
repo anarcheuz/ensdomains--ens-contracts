@@ -88,7 +88,7 @@ const config: HardhatUserConfig = {
       },
       // for DummyOldResolver contract
       {
-        version: '0.4.11',
+        version: '0.5.1',
         settings: {
           optimizer: {
             enabled: true,
